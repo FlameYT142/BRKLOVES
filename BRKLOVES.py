@@ -214,37 +214,42 @@ async def publish_post(callback: CallbackQuery):
     if not suggestion_text:
         suggestion_text = caption
     
-    suggest_button = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📩 Предложить пост", url="https://t.me/BrkLovesBot")]
-    ])
+    # Футер без линий
+    footer = (
+        f"\n\n"
+        f"💬 [Общение тут](https://t.me/+9kQ9P-pk1tg3ODg6)\n"
+        f"📩 [Предложить пост](https://t.me/BrkLovesBot)"
+    )
+    
+    final_text = suggestion_text + footer
     
     try:
         if original_msg.photo:
             await bot.send_photo(
                 chat_id=CHANNEL_ID,
                 photo=original_msg.photo[-1].file_id,
-                caption=suggestion_text,
-                reply_markup=suggest_button
+                caption=final_text,
+                parse_mode="Markdown"
             )
         elif original_msg.video:
             await bot.send_video(
                 chat_id=CHANNEL_ID,
                 video=original_msg.video.file_id,
-                caption=suggestion_text,
-                reply_markup=suggest_button
+                caption=final_text,
+                parse_mode="Markdown"
             )
         elif original_msg.document:
             await bot.send_document(
                 chat_id=CHANNEL_ID,
                 document=original_msg.document.file_id,
-                caption=suggestion_text,
-                reply_markup=suggest_button
+                caption=final_text,
+                parse_mode="Markdown"
             )
         else:
             await bot.send_message(
                 chat_id=CHANNEL_ID,
-                text=suggestion_text,
-                reply_markup=suggest_button
+                text=final_text,
+                parse_mode="Markdown"
             )
         
         await callback.answer("✅ Пост опубликован в канале!")
@@ -293,7 +298,7 @@ async def block_user(callback: CallbackQuery):
     
     if user_id in blocked_users:
         blocked_users.remove(user_id)
-        save_blocked_users()  # Сохраняем в файл
+        save_blocked_users()
         await callback.answer("🔓 Пользователь разблокирован")
         
         new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -310,7 +315,7 @@ async def block_user(callback: CallbackQuery):
         await callback.message.edit_reply_markup(reply_markup=new_keyboard)
     else:
         blocked_users.add(user_id)
-        save_blocked_users()  # Сохраняем в файл
+        save_blocked_users()
         await callback.answer("🚫 Пользователь заблокирован")
         
         new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -333,7 +338,7 @@ async def unblock_user(callback: CallbackQuery):
     
     if user_id in blocked_users:
         blocked_users.remove(user_id)
-        save_blocked_users()  # Сохраняем в файл
+        save_blocked_users()
         await callback.answer("🔓 Пользователь разблокирован")
         
         new_keyboard = InlineKeyboardMarkup(inline_keyboard=[

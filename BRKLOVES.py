@@ -214,10 +214,10 @@ async def publish_post(callback: CallbackQuery):
     if not suggestion_text:
         suggestion_text = caption
     
-    # Футер без линий
+    # Футер с новой ссылкой на чат
     footer = (
         f"\n\n"
-        f"💬 [Общение тут](https://t.me/+9kQ9P-pk1tg3ODg6)\n"
+        f"💬 [Общение тут](https://t.me/chat_bratsklove)\n"
         f"📩 [Предложить пост](https://t.me/BrkLovesBot)"
     )
     

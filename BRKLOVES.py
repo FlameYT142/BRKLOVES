@@ -59,16 +59,11 @@ async def start_cmd(message: Message):
     await message.answer(welcome_text, parse_mode="Markdown")
 
 # ------------------ ПРЕДЛОЖКИ (ТОЛЬКО В ЛИЧКУ БОТА) ------------------
-@dp.message()
+@dp.message(F.chat.id != ADMIN_CHAT_ID)
 async def handle_suggestion(message: Message):
+    """Обрабатывает предложки ТОЛЬКО из личных сообщений"""
     user = message.from_user
     user_id = user.id
-    
-    # ===== ЕСЛИ СООБЩЕНИЕ ИЗ АДМИН-ЧАТА - ИГНОРИРУЕМ =====
-    if message.chat.id == ADMIN_CHAT_ID:
-        return
-    
-    # ===== ТОЛЬКО ЛИЧНЫЕ СООБЩЕНИЯ БОТУ =====
     
     if user_id in blocked_users:
         await message.answer("🚫 Вы заблокированы модерацией. Ваши предложки не принимаются.")
@@ -132,19 +127,21 @@ async def handle_suggestion(message: Message):
         await message.answer("⚠️ Произошла ошибка. Попробуйте позже.")
 
 # ------------------ ОБРАБОТКА РЕПЛАЯ НА REPLY_TO_USER ------------------
-@dp.message()
+@dp.message(F.chat.id == ADMIN_CHAT_ID)
 async def handle_admin_reply(message: Message):
-    if message.chat.id != ADMIN_CHAT_ID:
-        return
+    """Обрабатывает Reply на сообщение REPLY_TO_USER"""
     
+    # Проверяем, является ли сообщение Reply на что-то
     if not message.reply_to_message:
         return
     
     reply_to_msg = message.reply_to_message
     
+    # Проверяем, есть ли в оригинальном сообщении маркер REPLY_TO_USER
     if not reply_to_msg.text or "REPLY_TO_USER:" not in reply_to_msg.text:
         return
     
+    # Извлекаем ID пользователя из текста
     try:
         user_id_line = reply_to_msg.text.split("\n")[0]
         target_user_id = int(user_id_line.replace("REPLY_TO_USER:", "").strip())
@@ -152,10 +149,12 @@ async def handle_admin_reply(message: Message):
         await message.answer(f"❌ Не удалось определить пользователя. Ошибка: {e}")
         return
     
+    # Проверяем, не заблокирован ли пользователь
     if target_user_id in blocked_users:
         await message.answer("⚠️ Пользователь заблокирован. Ответ не отправлен.")
         return
     
+    # Получаем текст ответа
     reply_text = message.text or "📎 Медиафайл (без текста)"
     
     try:
@@ -165,8 +164,10 @@ async def handle_admin_reply(message: Message):
             parse_mode="Markdown"
         )
         await message.answer(f"✅ Ответ отправлен пользователю (ID: `{target_user_id}`)")
+        logging.info(f"Ответ отправлен пользователю {target_user_id}")
     except Exception as e:
         await message.answer(f"❌ Не удалось отправить сообщение. Ошибка: {e}")
+        logging.error(f"Ошибка при отправке ответа: {e}")
 
 # ------------------ КНОПКИ АДМИНА ------------------
 @dp.callback_query(F.data.startswith("publish|"))

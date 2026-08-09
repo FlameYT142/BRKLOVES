@@ -14,7 +14,6 @@ ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", -1004386994995))
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@BRKLOVES")
 
 blocked_users: Set[int] = set()
-waiting_for_reply: Dict[int, dict] = {}
 
 logging.basicConfig(level=logging.INFO)
 
@@ -27,10 +26,7 @@ def get_admin_keyboard(user_id: int, username: str = None) -> InlineKeyboardMark
     if username:
         data += f"|{username}"
     
-    # Проверяем, заблокирован ли пользователь
     is_blocked = user_id in blocked_users
-    
-    # Выбираем текст для кнопки блокировки
     block_button_text = "🔓 Разблокировать" if is_blocked else "🚫 Заблокировать"
     block_callback = f"unblock|{data}" if is_blocked else f"block|{data}"
     
@@ -70,7 +66,7 @@ async def handle_suggestion(message: Message):
     
     # ===== ЕСЛИ СООБЩЕНИЕ ИЗ АДМИН-ЧАТА - ИГНОРИРУЕМ =====
     if message.chat.id == ADMIN_CHAT_ID:
-        return  # В админ-чате бот НЕ читает сообщения модераторов
+        return
     
     # ===== ТОЛЬКО ЛИЧНЫЕ СООБЩЕНИЯ БОТУ =====
     
@@ -138,21 +134,17 @@ async def handle_suggestion(message: Message):
 # ------------------ ОБРАБОТКА РЕПЛАЯ НА REPLY_TO_USER ------------------
 @dp.message()
 async def handle_admin_reply(message: Message):
-    # ===== ЭТОТ ОБРАБОТЧИК РАБОТАЕТ ТОЛЬКО В АДМИН-ЧАТЕ =====
     if message.chat.id != ADMIN_CHAT_ID:
         return
     
-    # Проверяем, является ли сообщение Reply на что-то
     if not message.reply_to_message:
         return
     
     reply_to_msg = message.reply_to_message
     
-    # Проверяем, есть ли в оригинальном сообщении маркер REPLY_TO_USER
     if not reply_to_msg.text or "REPLY_TO_USER:" not in reply_to_msg.text:
         return
     
-    # Извлекаем ID пользователя из текста
     try:
         user_id_line = reply_to_msg.text.split("\n")[0]
         target_user_id = int(user_id_line.replace("REPLY_TO_USER:", "").strip())
@@ -160,12 +152,10 @@ async def handle_admin_reply(message: Message):
         await message.answer(f"❌ Не удалось определить пользователя. Ошибка: {e}")
         return
     
-    # Проверяем, не заблокирован ли пользователь
     if target_user_id in blocked_users:
         await message.answer("⚠️ Пользователь заблокирован. Ответ не отправлен.")
         return
     
-    # Получаем текст ответа
     reply_text = message.text or "📎 Медиафайл (без текста)"
     
     try:
@@ -175,17 +165,13 @@ async def handle_admin_reply(message: Message):
             parse_mode="Markdown"
         )
         await message.answer(f"✅ Ответ отправлен пользователю (ID: `{target_user_id}`)")
-        logging.info(f"Ответ отправлен пользователю {target_user_id}")
     except Exception as e:
         await message.answer(f"❌ Не удалось отправить сообщение. Ошибка: {e}")
-        logging.error(f"Ошибка при отправке ответа: {e}")
 
 # ------------------ КНОПКИ АДМИНА ------------------
 @dp.callback_query(F.data.startswith("publish|"))
 async def publish_post(callback: CallbackQuery):
     data_part = callback.data.split("|")[1]
-    parts = data_part.split("|")
-    user_id = int(parts[0])
     
     original_msg = callback.message
     caption = original_msg.caption or original_msg.text
@@ -287,10 +273,25 @@ async def block_user(callback: CallbackQuery):
     user_id = int(data_part.split("|")[0])
     
     if user_id in blocked_users:
+        # Если пользователь уже заблокирован - разблокируем
         blocked_users.remove(user_id)
         await callback.answer("🔓 Пользователь разблокирован")
+        
+        # Создаём кнопку "Заблокировать" (новая клавиатура)
+        new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish|{data_part}"),
+                InlineKeyboardButton(text="❌ Отказать", callback_data=f"reject|{data_part}")
+            ],
+            [
+                InlineKeyboardButton(text="✏️ Ответить", callback_data=f"reply|{data_part}"),
+                InlineKeyboardButton(text="🚫 Заблокировать", callback_data=f"block|{data_part}")
+            ]
+        ])
+        
         await callback.message.edit_text(
-            f"{callback.message.text or callback.message.caption}\n\n🔓 **Разблокирован**",
+            f"{callback.message.text or callback.message.caption}\n\n🔓 **Пользователь разблокирован**",
+            reply_markup=new_keyboard,
             parse_mode="Markdown"
         )
         try:
@@ -301,10 +302,25 @@ async def block_user(callback: CallbackQuery):
         except:
             pass
     else:
+        # Блокируем пользователя
         blocked_users.add(user_id)
         await callback.answer("🚫 Пользователь заблокирован")
+        
+        # Создаём кнопку "Разблокировать" (новая клавиатура)
+        new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish|{data_part}"),
+                InlineKeyboardButton(text="❌ Отказать", callback_data=f"reject|{data_part}")
+            ],
+            [
+                InlineKeyboardButton(text="✏️ Ответить", callback_data=f"reply|{data_part}"),
+                InlineKeyboardButton(text="🔓 Разблокировать", callback_data=f"unblock|{data_part}")
+            ]
+        ])
+        
         await callback.message.edit_text(
             f"{callback.message.text or callback.message.caption}\n\n🚫 **Пользователь заблокирован**",
+            reply_markup=new_keyboard,
             parse_mode="Markdown"
         )
         try:
@@ -324,8 +340,22 @@ async def unblock_user(callback: CallbackQuery):
     if user_id in blocked_users:
         blocked_users.remove(user_id)
         await callback.answer("🔓 Пользователь разблокирован")
+        
+        # Создаём кнопку "Заблокировать"
+        new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish|{data_part}"),
+                InlineKeyboardButton(text="❌ Отказать", callback_data=f"reject|{data_part}")
+            ],
+            [
+                InlineKeyboardButton(text="✏️ Ответить", callback_data=f"reply|{data_part}"),
+                InlineKeyboardButton(text="🚫 Заблокировать", callback_data=f"block|{data_part}")
+            ]
+        ])
+        
         await callback.message.edit_text(
-            f"{callback.message.text or callback.message.caption}\n\n🔓 **Разблокирован**",
+            f"{callback.message.text or callback.message.caption}\n\n🔓 **Пользователь разблокирован**",
+            reply_markup=new_keyboard,
             parse_mode="Markdown"
         )
         try:

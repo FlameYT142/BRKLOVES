@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import json
 from typing import Dict, Set
 
 from aiogram import Bot, Dispatcher, F, types
@@ -13,7 +14,26 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", -1004386994995))
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@BRKLOVES")
 
-blocked_users: Set[int] = set()
+# Файл для хранения блокировок
+BLOCKED_FILE = "blocked_users.json"
+
+def load_blocked_users():
+    """Загружает список заблокированных пользователей из файла"""
+    if os.path.exists(BLOCKED_FILE):
+        try:
+            with open(BLOCKED_FILE, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+        except:
+            return set()
+    return set()
+
+def save_blocked_users():
+    """Сохраняет список заблокированных пользователей в файл"""
+    with open(BLOCKED_FILE, "w", encoding="utf-8") as f:
+        json.dump(list(blocked_users), f, ensure_ascii=False, indent=2)
+
+# Загружаем блокировки из файла
+blocked_users: Set[int] = load_blocked_users()
 
 logging.basicConfig(level=logging.INFO)
 
@@ -166,19 +186,16 @@ async def publish_post(callback: CallbackQuery):
     original_msg = callback.message
     caption = original_msg.caption or original_msg.text
     
-    # Извлекаем ТОЛЬКО текст предложки (без служебной информации и статусов)
+    # Извлекаем ТОЛЬКО текст предложки
     suggestion_text = ""
     
     if "📝 **Текст предложки:**" in caption:
-        # Если есть маркер "Текст предложки:"
         suggestion_text = caption.split("📝 **Текст предложки:**")[1].strip()
-        # Убираем всё после "Пользователь" или "Опубликовано"
         for stop_word in ["Пользователь", "Опубликовано", "Отклонено", "Разблокирован", "Заблокирован"]:
             if stop_word in suggestion_text:
                 suggestion_text = suggestion_text.split(stop_word)[0].strip()
                 break
     else:
-        # Если маркера нет, парсим строки
         lines = caption.split("\n")
         suggestion_lines = []
         found = False
@@ -188,14 +205,12 @@ async def publish_post(callback: CallbackQuery):
                 found = True
                 continue
             if found:
-                # Останавливаемся при встрече статусов
                 if any(word in line for word in ["Пользователь", "Опубликовано", "Отклонено", "Разблокирован", "Заблокирован"]):
                     break
                 suggestion_lines.append(line)
         
         suggestion_text = "\n".join(suggestion_lines).strip()
     
-    # Если всё равно пусто — берём оригинальный текст
     if not suggestion_text:
         suggestion_text = caption
     
@@ -278,6 +293,7 @@ async def block_user(callback: CallbackQuery):
     
     if user_id in blocked_users:
         blocked_users.remove(user_id)
+        save_blocked_users()  # Сохраняем в файл
         await callback.answer("🔓 Пользователь разблокирован")
         
         new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -294,6 +310,7 @@ async def block_user(callback: CallbackQuery):
         await callback.message.edit_reply_markup(reply_markup=new_keyboard)
     else:
         blocked_users.add(user_id)
+        save_blocked_users()  # Сохраняем в файл
         await callback.answer("🚫 Пользователь заблокирован")
         
         new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -316,6 +333,7 @@ async def unblock_user(callback: CallbackQuery):
     
     if user_id in blocked_users:
         blocked_users.remove(user_id)
+        save_blocked_users()  # Сохраняем в файл
         await callback.answer("🔓 Пользователь разблокирован")
         
         new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -338,6 +356,7 @@ async def main():
     print("✅ Бот запущен и готов к работе!")
     print(f"📢 Канал: {CHANNEL_ID}")
     print(f"👥 Админ-чат: {ADMIN_CHAT_ID}")
+    print(f"🔒 Загружено блокировок: {len(blocked_users)}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

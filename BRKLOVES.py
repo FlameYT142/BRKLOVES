@@ -47,7 +47,6 @@ def get_admin_keyboard(user_id: int, username: str = None) -> InlineKeyboardMark
 async def start_cmd(message: Message):
     user_id = message.from_user.id
     
-    # НЕ проверяем на блокировку, просто приветствуем
     welcome_text = (
         "👋 Привет!\n"
         "Это предложка Telegram каналу - **\"БРАТСКУ НРАВИТСЯ\"**\n\n"
@@ -61,8 +60,6 @@ async def handle_suggestion(message: Message):
     """Обрабатывает предложки ТОЛЬКО из личных сообщений"""
     user = message.from_user
     user_id = user.id
-    
-    # НЕ проверяем на блокировку, принимаем все предложки
     
     content = ""
     if message.text:
@@ -126,23 +123,19 @@ async def handle_suggestion(message: Message):
 async def handle_admin_reply(message: Message):
     """Обрабатывает Reply на сообщение REPLY_TO_USER"""
     
-    # Проверяем, является ли сообщение Reply на что-то
     if not message.reply_to_message:
         return
     
     reply_to_msg = message.reply_to_message
     
-    # Проверяем, есть ли в оригинальном сообщении маркер REPLY_TO_USER
     if not reply_to_msg.text or "REPLY_TO_USER:" not in reply_to_msg.text:
         return
     
-    # Извлекаем ID пользователя и username модератора из текста
     try:
         lines = reply_to_msg.text.split("\n")
         user_id_line = lines[0]
         target_user_id = int(user_id_line.replace("REPLY_TO_USER:", "").strip())
         
-        # Извлекаем username модератора из сообщения
         moderator_display = "Модератор"
         for line in lines:
             if "Модератор:" in line:
@@ -152,9 +145,6 @@ async def handle_admin_reply(message: Message):
         await message.answer(f"❌ Не удалось определить пользователя. Ошибка: {e}")
         return
     
-    # НЕ проверяем на блокировку, отправляем ответ всегда
-    
-    # Получаем текст ответа
     reply_text = message.text or "📎 Медиафайл (без текста)"
     
     try:
@@ -164,29 +154,50 @@ async def handle_admin_reply(message: Message):
             parse_mode="Markdown"
         )
         await message.answer(f"✅ Ответ отправлен пользователю (ID: `{target_user_id}`) от {moderator_display}")
-        logging.info(f"Ответ отправлен пользователю {target_user_id} от {moderator_display}")
     except Exception as e:
         await message.answer(f"❌ Не удалось отправить сообщение. Ошибка: {e}")
-        logging.error(f"Ошибка при отправке ответа: {e}")
 
 # ------------------ КНОПКИ АДМИНА ------------------
 @dp.callback_query(F.data.startswith("publish|"))
 async def publish_post(callback: CallbackQuery):
     data_part = callback.data.split("|")[1]
+    user_id = int(data_part.split("|")[0])
     
     original_msg = callback.message
     caption = original_msg.caption or original_msg.text
     
+    # Извлекаем ТОЛЬКО текст предложки (без служебной информации и статусов)
+    suggestion_text = ""
+    
     if "📝 **Текст предложки:**" in caption:
+        # Если есть маркер "Текст предложки:"
         suggestion_text = caption.split("📝 **Текст предложки:**")[1].strip()
-    else:
-        lines = caption.split("\n")
-        for i, line in enumerate(lines):
-            if "Текст предложки:" in line:
-                suggestion_text = "\n".join(lines[i+1:]).strip()
+        # Убираем всё после "Пользователь" или "Опубликовано"
+        for stop_word in ["Пользователь", "Опубликовано", "Отклонено", "Разблокирован", "Заблокирован"]:
+            if stop_word in suggestion_text:
+                suggestion_text = suggestion_text.split(stop_word)[0].strip()
                 break
-        else:
-            suggestion_text = caption
+    else:
+        # Если маркера нет, парсим строки
+        lines = caption.split("\n")
+        suggestion_lines = []
+        found = False
+        
+        for line in lines:
+            if "Текст предложки:" in line:
+                found = True
+                continue
+            if found:
+                # Останавливаемся при встрече статусов
+                if any(word in line for word in ["Пользователь", "Опубликовано", "Отклонено", "Разблокирован", "Заблокирован"]):
+                    break
+                suggestion_lines.append(line)
+        
+        suggestion_text = "\n".join(suggestion_lines).strip()
+    
+    # Если всё равно пусто — берём оригинальный текст
+    if not suggestion_text:
+        suggestion_text = caption
     
     suggest_button = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📩 Предложить пост", url="https://t.me/BrkLovesBot")]
@@ -240,8 +251,6 @@ async def reject_post(callback: CallbackQuery):
         f"{callback.message.text or callback.message.caption}\n\n❌ **Отклонено**",
         parse_mode="Markdown"
     )
-    
-    # НЕ отправляем уведомление пользователю об отказе
 
 @dp.callback_query(F.data.startswith("reply|"))
 async def reply_to_user(callback: CallbackQuery):
@@ -268,11 +277,9 @@ async def block_user(callback: CallbackQuery):
     user_id = int(data_part.split("|")[0])
     
     if user_id in blocked_users:
-        # Если пользователь уже заблокирован - разблокируем
         blocked_users.remove(user_id)
         await callback.answer("🔓 Пользователь разблокирован")
         
-        # Создаём кнопку "Заблокировать" (новая клавиатура)
         new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish|{data_part}"),
@@ -284,18 +291,11 @@ async def block_user(callback: CallbackQuery):
             ]
         ])
         
-        await callback.message.edit_text(
-            f"{callback.message.text or callback.message.caption}\n\n🔓 **Пользователь разблокирован**",
-            reply_markup=new_keyboard,
-            parse_mode="Markdown"
-        )
-        # НЕ отправляем уведомление пользователю
+        await callback.message.edit_reply_markup(reply_markup=new_keyboard)
     else:
-        # Блокируем пользователя
         blocked_users.add(user_id)
         await callback.answer("🚫 Пользователь заблокирован")
         
-        # Создаём кнопку "Разблокировать" (новая клавиатура)
         new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish|{data_part}"),
@@ -307,12 +307,7 @@ async def block_user(callback: CallbackQuery):
             ]
         ])
         
-        await callback.message.edit_text(
-            f"{callback.message.text or callback.message.caption}\n\n🚫 **Пользователь заблокирован**",
-            reply_markup=new_keyboard,
-            parse_mode="Markdown"
-        )
-        # НЕ отправляем уведомление пользователю
+        await callback.message.edit_reply_markup(reply_markup=new_keyboard)
 
 @dp.callback_query(F.data.startswith("unblock|"))
 async def unblock_user(callback: CallbackQuery):
@@ -323,7 +318,6 @@ async def unblock_user(callback: CallbackQuery):
         blocked_users.remove(user_id)
         await callback.answer("🔓 Пользователь разблокирован")
         
-        # Создаём кнопку "Заблокировать"
         new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish|{data_part}"),
@@ -335,12 +329,7 @@ async def unblock_user(callback: CallbackQuery):
             ]
         ])
         
-        await callback.message.edit_text(
-            f"{callback.message.text or callback.message.caption}\n\n🔓 **Пользователь разблокирован**",
-            reply_markup=new_keyboard,
-            parse_mode="Markdown"
-        )
-        # НЕ отправляем уведомление пользователю
+        await callback.message.edit_reply_markup(reply_markup=new_keyboard)
     else:
         await callback.answer("⚠️ Пользователь уже разблокирован")
 

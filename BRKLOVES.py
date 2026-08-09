@@ -141,10 +141,18 @@ async def handle_admin_reply(message: Message):
     if not reply_to_msg.text or "REPLY_TO_USER:" not in reply_to_msg.text:
         return
     
-    # Извлекаем ID пользователя из текста
+    # Извлекаем ID пользователя и username модератора из текста
     try:
-        user_id_line = reply_to_msg.text.split("\n")[0]
+        lines = reply_to_msg.text.split("\n")
+        user_id_line = lines[0]
         target_user_id = int(user_id_line.replace("REPLY_TO_USER:", "").strip())
+        
+        # Извлекаем username модератора из сообщения
+        moderator_display = "Модератор"
+        for line in lines:
+            if "Модератор:" in line:
+                moderator_display = line.replace("Модератор:", "").strip()
+                break
     except Exception as e:
         await message.answer(f"❌ Не удалось определить пользователя. Ошибка: {e}")
         return
@@ -160,11 +168,11 @@ async def handle_admin_reply(message: Message):
     try:
         await bot.send_message(
             target_user_id,
-            f"✉️ **Ответ от модератора:**\n\n{reply_text}",
+            f"✉️ **Ответ от модератора {moderator_display}**\n\n{reply_text}",
             parse_mode="Markdown"
         )
-        await message.answer(f"✅ Ответ отправлен пользователю (ID: `{target_user_id}`)")
-        logging.info(f"Ответ отправлен пользователю {target_user_id}")
+        await message.answer(f"✅ Ответ отправлен пользователю (ID: `{target_user_id}`) от {moderator_display}")
+        logging.info(f"Ответ отправлен пользователю {target_user_id} от {moderator_display}")
     except Exception as e:
         await message.answer(f"❌ Не удалось отправить сообщение. Ошибка: {e}")
         logging.error(f"Ошибка при отправке ответа: {e}")

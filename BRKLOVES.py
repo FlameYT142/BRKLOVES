@@ -69,10 +69,27 @@ async def start_cmd(message: Message):
     )
     await message.answer(welcome_text, parse_mode="Markdown")
 
+# ------------------ ОБРАБОТЧИК ПРЕДЛОЖЕК ------------------
 @dp.message()
 async def handle_suggestion(message: Message):
     user = message.from_user
     user_id = user.id
+    
+    # ------ ЕСЛИ СООБЩЕНИЕ ИЗ АДМИН-ЧАТА - ИГНОРИРУЕМ ЛЮБЫЕ СООБЩЕНИЯ ------
+    if message.chat.id == ADMIN_CHAT_ID:
+        # Проверяем, является ли отправитель администратором
+        try:
+            chat_member = await bot.get_chat_member(message.chat.id, user_id)
+            if chat_member.status in ['administrator', 'creator']:
+                # Администратор пишет в админ-чат — ИГНОРИРУЕМ
+                return
+        except:
+            pass
+        
+        # Если это не админ, но сообщение пришло в админ-чат — тоже ИГНОРИРУЕМ
+        return
+    
+    # ------ ДАЛЬШЕ ТОЛЬКО ЛИЧНЫЕ СООБЩЕНИЯ БОТУ ------
     
     # Проверка на блокировку
     if user_id in blocked_users:

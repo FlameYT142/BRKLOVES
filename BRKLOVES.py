@@ -225,7 +225,7 @@ async def reject_post(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("reply|"))
 async def reply_to_user(callback: CallbackQuery):
-    """Модератор нажимает 'Ответить' — бот запоминает, что нужно ответить этому пользователю"""
+    """Модератор нажимает 'Ответить' — бот создаёт сообщение для Reply"""
     data_part = callback.data.split("|")[1]
     user_id = int(data_part.split("|")[0])
     
@@ -234,7 +234,6 @@ async def reply_to_user(callback: CallbackQuery):
     if moderator_username:
         moderator_display = f"@{moderator_username}"
     else:
-        # Если юзернейма нет, используем имя или ID
         moderator_display = callback.from_user.full_name or f"ID: {callback.from_user.id}"
     
     # Сохраняем в словарь, что этот модератор хочет ответить пользователю
@@ -244,44 +243,60 @@ async def reply_to_user(callback: CallbackQuery):
         "moderator_display": moderator_display
     }
     
+    # Отправляем сообщение, на которое модератор должен ответить Reply
     await callback.message.answer(
-        f"✏️ Напишите текст ответа для пользователя (ID: `{user_id}`).\n"
-        "Ваше сообщение будет отправлено ему от имени бота.",
-        parse_mode="Markdown"
+        f"REPLY_TO_USER:{user_id}\n"
+        f"Ответьте реплаем на это сообщение, и бот отправит текст пользователю.\n\n"
+        f"Модератор: {moderator_display}"
     )
+    
     await callback.answer()
 
 @dp.message()
 async def handle_admin_reply(message: Message):
-    """Обрабатывает ответ модератора и отправляет пользователю"""
-    admin_id = message.from_user.id
+    """Обрабатывает Reply на сообщение REPLY_TO_USER и отправляет пользователю"""
+    # Проверяем, является ли сообщение Reply на что-то
+    if message.reply_to_message:
+        reply_to_msg = message.reply_to_message
+        
+        # Проверяем, есть ли в оригинальном сообщении маркер REPLY_TO_USER
+        if reply_to_msg.text and "REPLY_TO_USER:" in reply_to_msg.text:
+            # Извлекаем ID пользователя из текста
+            try:
+                user_id_line = reply_to_msg.text.split("\n")[0]
+                target_user_id = int(user_id_line.replace("REPLY_TO_USER:", "").strip())
+            except:
+                await message.answer("❌ Не удалось определить пользователя для ответа.")
+                return
+            
+            # Проверяем, не заблокирован ли пользователь
+            if target_user_id in blocked_users:
+                await message.answer("⚠️ Этот пользователь заблокирован. Ответ не отправлен.")
+                return
+            
+            # Получаем текст ответа
+            reply_text = message.text or "📎 Медиафайл (без текста)"
+            
+            try:
+                await bot.send_message(
+                    target_user_id,
+                    f"✉️ **Ответ от модератора:**\n\n{reply_text}",
+                    parse_mode="Markdown"
+                )
+                await message.answer(f"✅ Ответ отправлен пользователю (ID: `{target_user_id}`)")
+            except Exception as e:
+                await message.answer(f"❌ Не удалось отправить сообщение. Ошибка: {e}")
+            return
     
-    # Проверяем, ждёт ли этот модератор ответа
+    # Если это не Reply на REPLY_TO_USER, но модератор в режиме ожидания
+    admin_id = message.from_user.id
     if admin_id in waiting_for_reply:
-        reply_data = waiting_for_reply.pop(admin_id)
-        target_user_id = reply_data["user_id"]
-        moderator_display = reply_data["moderator_display"]
-        
-        # Получаем текст ответа
-        reply_text = message.text or "📎 Медиафайл (без текста)"
-        
-        try:
-            await bot.send_message(
-                target_user_id,
-                f"✉️ **Ответ от модератора ({moderator_display}):**\n\n{reply_text}",
-                parse_mode="Markdown"
-            )
-            await message.answer(
-                f"✅ Ответ отправлен пользователю (ID: `{target_user_id}`) от {moderator_display}",
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            await message.answer(f"❌ Не удалось отправить сообщение. Ошибка: {e}")
-    else:
-        # Модератор просто написал текст в чат — это не ответ пользователю
+        # Модератор отправил обычное сообщение (не Reply)
+        # Очищаем режим ожидания и сообщаем, как правильно
+        waiting_for_reply.pop(admin_id)
         await message.answer(
-            "⚠️ Чтобы ответить пользователю, нажмите кнопку '✏️ Ответить' под его предложкой.\n"
-            "А затем отправьте текст — он уйдёт пользователю.",
+            "⚠️ Чтобы ответить пользователю, нажмите кнопку '✏️ Ответить' под его предложкой,\n"
+            "а затем ОТВЕТЬТЕ РЕПЛАЕМ на появившееся сообщение.",
             parse_mode="Markdown"
         )
 

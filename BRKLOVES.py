@@ -9,27 +9,20 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.storage.memory import MemoryStorage
 
 # ------------------ КОНФИГУРАЦИЯ ------------------
-# Бот берет данные из переменных окружения (настраиваются в панели Bothost)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", -1004386994995))
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@BRKLOVES")
 
-# Хранилище заблокированных пользователей
 blocked_users: Set[int] = set()
-
-# Словарь для ожидания ответа админа
 waiting_for_reply: Dict[int, dict] = {}
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 # ------------------ КЛАВИАТУРЫ АДМИНА ------------------
 def get_admin_keyboard(user_id: int, username: str = None) -> InlineKeyboardMarkup:
-    """Кнопки для администратора под каждой предложкой"""
     data = f"{user_id}"
     if username:
         data += f"|{username}"
@@ -53,7 +46,7 @@ def get_admin_keyboard(user_id: int, username: str = None) -> InlineKeyboardMark
     ])
     return keyboard
 
-# ------------------ ОСНОВНЫЕ КОМАНДЫ ------------------
+# ------------------ /start ------------------
 @dp.message(Command("start"))
 async def start_cmd(message: Message):
     user_id = message.from_user.id
@@ -69,34 +62,22 @@ async def start_cmd(message: Message):
     )
     await message.answer(welcome_text, parse_mode="Markdown")
 
-# ------------------ ОБРАБОТЧИК ПРЕДЛОЖЕК ------------------
+# ------------------ ПРЕДЛОЖКИ (ТОЛЬКО В ЛИЧКУ БОТА) ------------------
 @dp.message()
 async def handle_suggestion(message: Message):
     user = message.from_user
     user_id = user.id
     
-    # ------ ЕСЛИ СООБЩЕНИЕ ИЗ АДМИН-ЧАТА - ИГНОРИРУЕМ ЛЮБЫЕ СООБЩЕНИЯ ------
+    # ===== ЕСЛИ СООБЩЕНИЕ ИЗ АДМИН-ЧАТА - ИГНОРИРУЕМ =====
     if message.chat.id == ADMIN_CHAT_ID:
-        # Проверяем, является ли отправитель администратором
-        try:
-            chat_member = await bot.get_chat_member(message.chat.id, user_id)
-            if chat_member.status in ['administrator', 'creator']:
-                # Администратор пишет в админ-чат — ИГНОРИРУЕМ
-                return
-        except:
-            pass
-        
-        # Если это не админ, но сообщение пришло в админ-чат — тоже ИГНОРИРУЕМ
-        return
+        return  # В админ-чате бот НЕ читает сообщения модераторов
     
-    # ------ ДАЛЬШЕ ТОЛЬКО ЛИЧНЫЕ СООБЩЕНИЯ БОТУ ------
+    # ===== ТОЛЬКО ЛИЧНЫЕ СООБЩЕНИЯ БОТУ =====
     
-    # Проверка на блокировку
     if user_id in blocked_users:
         await message.answer("🚫 Вы заблокированы модерацией. Ваши предложки не принимаются.")
         return
     
-    # Получаем текст или подпись к медиа
     content = ""
     if message.text:
         content = message.text
@@ -105,11 +86,9 @@ async def handle_suggestion(message: Message):
     else:
         content = "[Медиафайл без текста]"
     
-    # Определяем юзернейм
     username = f"@{user.username}" if user.username else None
     user_identifier = username if username else str(user_id)
     
-    # Формируем сообщение для админов
     admin_msg = (
         f"📬 **Новая предложка**\n\n"
         f"👤 **Отправитель:** {user_identifier}\n"
@@ -156,7 +135,52 @@ async def handle_suggestion(message: Message):
         logging.error(f"Ошибка при отправке админам: {e}")
         await message.answer("⚠️ Произошла ошибка. Попробуйте позже.")
 
-# ------------------ ОБРАБОТКА ДЕЙСТВИЙ АДМИНА ------------------
+# ------------------ ОБРАБОТКА РЕПЛАЯ НА REPLY_TO_USER ------------------
+@dp.message()
+async def handle_admin_reply(message: Message):
+    # ===== ЭТОТ ОБРАБОТЧИК РАБОТАЕТ ТОЛЬКО В АДМИН-ЧАТЕ =====
+    if message.chat.id != ADMIN_CHAT_ID:
+        return
+    
+    # Проверяем, является ли сообщение Reply на что-то
+    if not message.reply_to_message:
+        return
+    
+    reply_to_msg = message.reply_to_message
+    
+    # Проверяем, есть ли в оригинальном сообщении маркер REPLY_TO_USER
+    if not reply_to_msg.text or "REPLY_TO_USER:" not in reply_to_msg.text:
+        return
+    
+    # Извлекаем ID пользователя из текста
+    try:
+        user_id_line = reply_to_msg.text.split("\n")[0]
+        target_user_id = int(user_id_line.replace("REPLY_TO_USER:", "").strip())
+    except Exception as e:
+        await message.answer(f"❌ Не удалось определить пользователя. Ошибка: {e}")
+        return
+    
+    # Проверяем, не заблокирован ли пользователь
+    if target_user_id in blocked_users:
+        await message.answer("⚠️ Пользователь заблокирован. Ответ не отправлен.")
+        return
+    
+    # Получаем текст ответа
+    reply_text = message.text or "📎 Медиафайл (без текста)"
+    
+    try:
+        await bot.send_message(
+            target_user_id,
+            f"✉️ **Ответ от модератора:**\n\n{reply_text}",
+            parse_mode="Markdown"
+        )
+        await message.answer(f"✅ Ответ отправлен пользователю (ID: `{target_user_id}`)")
+        logging.info(f"Ответ отправлен пользователю {target_user_id}")
+    except Exception as e:
+        await message.answer(f"❌ Не удалось отправить сообщение. Ошибка: {e}")
+        logging.error(f"Ошибка при отправке ответа: {e}")
+
+# ------------------ КНОПКИ АДМИНА ------------------
 @dp.callback_query(F.data.startswith("publish|"))
 async def publish_post(callback: CallbackQuery):
     data_part = callback.data.split("|")[1]
@@ -166,7 +190,6 @@ async def publish_post(callback: CallbackQuery):
     original_msg = callback.message
     caption = original_msg.caption or original_msg.text
     
-    # Извлекаем ТОЛЬКО текст предложки (без служебной информации)
     if "📝 **Текст предложки:**" in caption:
         suggestion_text = caption.split("📝 **Текст предложки:**")[1].strip()
     else:
@@ -178,7 +201,6 @@ async def publish_post(callback: CallbackQuery):
         else:
             suggestion_text = caption
     
-    # Создаём кнопку "Предложить пост" под постом
     suggest_button = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📩 Предложить пост", url="https://t.me/BrkLovesBot")]
     ])
@@ -242,25 +264,15 @@ async def reject_post(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("reply|"))
 async def reply_to_user(callback: CallbackQuery):
-    """Модератор нажимает 'Ответить' — бот создаёт сообщение для Reply"""
     data_part = callback.data.split("|")[1]
     user_id = int(data_part.split("|")[0])
     
-    # Определяем юзернейм модератора
     moderator_username = callback.from_user.username
     if moderator_username:
         moderator_display = f"@{moderator_username}"
     else:
         moderator_display = callback.from_user.full_name or f"ID: {callback.from_user.id}"
     
-    # Сохраняем в словарь, что этот модератор хочет ответить пользователю
-    waiting_for_reply[callback.from_user.id] = {
-        "user_id": user_id,
-        "moderator_id": callback.from_user.id,
-        "moderator_display": moderator_display
-    }
-    
-    # Отправляем сообщение, на которое модератор должен ответить Reply
     await callback.message.answer(
         f"REPLY_TO_USER:{user_id}\n"
         f"Ответьте реплаем на это сообщение, и бот отправит текст пользователю.\n\n"
@@ -268,54 +280,6 @@ async def reply_to_user(callback: CallbackQuery):
     )
     
     await callback.answer()
-
-@dp.message()
-async def handle_admin_reply(message: Message):
-    """Обрабатывает Reply на сообщение REPLY_TO_USER и отправляет пользователю"""
-    # Проверяем, является ли сообщение Reply на что-то
-    if message.reply_to_message:
-        reply_to_msg = message.reply_to_message
-        
-        # Проверяем, есть ли в оригинальном сообщении маркер REPLY_TO_USER
-        if reply_to_msg.text and "REPLY_TO_USER:" in reply_to_msg.text:
-            # Извлекаем ID пользователя из текста
-            try:
-                user_id_line = reply_to_msg.text.split("\n")[0]
-                target_user_id = int(user_id_line.replace("REPLY_TO_USER:", "").strip())
-            except:
-                await message.answer("❌ Не удалось определить пользователя для ответа.")
-                return
-            
-            # Проверяем, не заблокирован ли пользователь
-            if target_user_id in blocked_users:
-                await message.answer("⚠️ Этот пользователь заблокирован. Ответ не отправлен.")
-                return
-            
-            # Получаем текст ответа
-            reply_text = message.text or "📎 Медиафайл (без текста)"
-            
-            try:
-                await bot.send_message(
-                    target_user_id,
-                    f"✉️ **Ответ от модератора:**\n\n{reply_text}",
-                    parse_mode="Markdown"
-                )
-                await message.answer(f"✅ Ответ отправлен пользователю (ID: `{target_user_id}`)")
-            except Exception as e:
-                await message.answer(f"❌ Не удалось отправить сообщение. Ошибка: {e}")
-            return
-    
-    # Если это не Reply на REPLY_TO_USER, но модератор в режиме ожидания
-    admin_id = message.from_user.id
-    if admin_id in waiting_for_reply:
-        # Модератор отправил обычное сообщение (не Reply)
-        # Очищаем режим ожидания и сообщаем, как правильно
-        waiting_for_reply.pop(admin_id)
-        await message.answer(
-            "⚠️ Чтобы ответить пользователю, нажмите кнопку '✏️ Ответить' под его предложкой,\n"
-            "а затем ОТВЕТЬТЕ РЕПЛАЕМ на появившееся сообщение.",
-            parse_mode="Markdown"
-        )
 
 @dp.callback_query(F.data.startswith("block|"))
 async def block_user(callback: CallbackQuery):
@@ -374,7 +338,7 @@ async def unblock_user(callback: CallbackQuery):
     else:
         await callback.answer("⚠️ Пользователь уже разблокирован")
 
-# ------------------ ЗАПУСК БОТА ------------------
+# ------------------ ЗАПУСК ------------------
 async def main():
     print("✅ Бот запущен и готов к работе!")
     print(f"📢 Канал: {CHANNEL_ID}")

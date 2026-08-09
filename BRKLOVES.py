@@ -47,10 +47,7 @@ def get_admin_keyboard(user_id: int, username: str = None) -> InlineKeyboardMark
 async def start_cmd(message: Message):
     user_id = message.from_user.id
     
-    if user_id in blocked_users:
-        await message.answer("🚫 Вы заблокированы модерацией. Вы не можете предлагать посты.")
-        return
-    
+    # НЕ проверяем на блокировку, просто приветствуем
     welcome_text = (
         "👋 Привет!\n"
         "Это предложка Telegram каналу - **\"БРАТСКУ НРАВИТСЯ\"**\n\n"
@@ -65,9 +62,7 @@ async def handle_suggestion(message: Message):
     user = message.from_user
     user_id = user.id
     
-    if user_id in blocked_users:
-        await message.answer("🚫 Вы заблокированы модерацией. Ваши предложки не принимаются.")
-        return
+    # НЕ проверяем на блокировку, принимаем все предложки
     
     content = ""
     if message.text:
@@ -157,10 +152,7 @@ async def handle_admin_reply(message: Message):
         await message.answer(f"❌ Не удалось определить пользователя. Ошибка: {e}")
         return
     
-    # Проверяем, не заблокирован ли пользователь
-    if target_user_id in blocked_users:
-        await message.answer("⚠️ Пользователь заблокирован. Ответ не отправлен.")
-        return
+    # НЕ проверяем на блокировку, отправляем ответ всегда
     
     # Получаем текст ответа
     reply_text = message.text or "📎 Медиафайл (без текста)"
@@ -249,13 +241,7 @@ async def reject_post(callback: CallbackQuery):
         parse_mode="Markdown"
     )
     
-    try:
-        await bot.send_message(
-            user_id,
-            "❌ К сожалению, ваша предложка была отклонена модерацией."
-        )
-    except:
-        pass
+    # НЕ отправляем уведомление пользователю об отказе
 
 @dp.callback_query(F.data.startswith("reply|"))
 async def reply_to_user(callback: CallbackQuery):
@@ -303,13 +289,7 @@ async def block_user(callback: CallbackQuery):
             reply_markup=new_keyboard,
             parse_mode="Markdown"
         )
-        try:
-            await bot.send_message(
-                user_id,
-                "🔓 Вы были разблокированы модерацией. Теперь вы снова можете предлагать посты."
-            )
-        except:
-            pass
+        # НЕ отправляем уведомление пользователю
     else:
         # Блокируем пользователя
         blocked_users.add(user_id)
@@ -332,14 +312,7 @@ async def block_user(callback: CallbackQuery):
             reply_markup=new_keyboard,
             parse_mode="Markdown"
         )
-        try:
-            await bot.send_message(
-                user_id,
-                "🚫 Вы были заблокированы модерацией. Вы больше не можете предлагать посты.\n"
-                "Причина: нарушение правил предложки."
-            )
-        except:
-            pass
+        # НЕ отправляем уведомление пользователю
 
 @dp.callback_query(F.data.startswith("unblock|"))
 async def unblock_user(callback: CallbackQuery):
@@ -367,13 +340,7 @@ async def unblock_user(callback: CallbackQuery):
             reply_markup=new_keyboard,
             parse_mode="Markdown"
         )
-        try:
-            await bot.send_message(
-                user_id,
-                "🔓 Вы были разблокированы модерацией. Теперь вы снова можете предлагать посты."
-            )
-        except:
-            pass
+        # НЕ отправляем уведомление пользователю
     else:
         await callback.answer("⚠️ Пользователь уже разблокирован")
 

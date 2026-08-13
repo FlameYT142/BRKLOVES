@@ -271,13 +271,14 @@ async def publish_post(callback: CallbackQuery):
         
         # Убираем все статусы
         statuses = ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]
+        base_text = current_text
         for status in statuses:
-            if status in current_text:
-                current_text = current_text.split(status)[0].strip()
+            if status in base_text:
+                base_text = base_text.split(status)[0].strip()
                 break
         
         # Добавляем новый статус
-        new_text = f"{current_text}\n\n✅ **Опубликовано** (модератор: {moderator_username})"
+        new_text = f"{base_text}\n\n✅ **Опубликовано** (модератор: {moderator_username})"
         
         await callback.message.edit_text(
             new_text,
@@ -303,12 +304,13 @@ async def reject_post(callback: CallbackQuery):
     
     # Убираем все статусы
     statuses = ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]
+    base_text = current_text
     for status in statuses:
-        if status in current_text:
-            current_text = current_text.split(status)[0].strip()
+        if status in base_text:
+            base_text = base_text.split(status)[0].strip()
             break
     
-    new_text = f"{current_text}\n\n❌ **Отклонено** (модератор: {moderator_username})"
+    new_text = f"{base_text}\n\n❌ **Отклонено** (модератор: {moderator_username})"
     
     await callback.message.edit_text(
         new_text,
@@ -342,7 +344,19 @@ async def block_user(callback: CallbackQuery):
     moderator = callback.from_user
     moderator_username = f"@{moderator.username}" if moderator.username else moderator.full_name or f"ID: {moderator.id}"
     
+    # Определяем базовый текст (без статусов)
+    full_text = callback.message.text or callback.message.caption or ""
+    
+    # Убираем ВСЕ статусы
+    statuses = ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]
+    base_text = full_text
+    for status in statuses:
+        if status in base_text:
+            base_text = base_text.split(status)[0].strip()
+            break
+    
     if user_id in blocked_users:
+        # Разблокируем
         blocked_users.remove(user_id)
         save_blocked_users()
         await callback.answer("🔓 Пользователь разблокирован")
@@ -358,15 +372,7 @@ async def block_user(callback: CallbackQuery):
             ]
         ])
         
-        current_text = callback.message.text or callback.message.caption or ""
-        
-        statuses = ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]
-        for status in statuses:
-            if status in current_text:
-                current_text = current_text.split(status)[0].strip()
-                break
-        
-        new_text = f"{current_text}\n\n🔓 **Разблокирован** (модератор: {moderator_username})"
+        new_text = f"{base_text}\n\n🔓 **Разблокирован** (модератор: {moderator_username})"
         
         await callback.message.edit_text(
             new_text,
@@ -374,6 +380,7 @@ async def block_user(callback: CallbackQuery):
             parse_mode="Markdown"
         )
     else:
+        # Блокируем
         blocked_users.add(user_id)
         save_blocked_users()
         await callback.answer("🚫 Пользователь заблокирован")
@@ -389,15 +396,7 @@ async def block_user(callback: CallbackQuery):
             ]
         ])
         
-        current_text = callback.message.text or callback.message.caption or ""
-        
-        statuses = ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]
-        for status in statuses:
-            if status in current_text:
-                current_text = current_text.split(status)[0].strip()
-                break
-        
-        new_text = f"{current_text}\n\n🚫 **Заблокирован** (модератор: {moderator_username})"
+        new_text = f"{base_text}\n\n🚫 **Заблокирован** (модератор: {moderator_username})"
         
         await callback.message.edit_text(
             new_text,
@@ -412,6 +411,17 @@ async def unblock_user(callback: CallbackQuery):
     
     moderator = callback.from_user
     moderator_username = f"@{moderator.username}" if moderator.username else moderator.full_name or f"ID: {moderator.id}"
+    
+    # Определяем базовый текст (без статусов)
+    full_text = callback.message.text or callback.message.caption or ""
+    
+    # Убираем ВСЕ статусы
+    statuses = ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]
+    base_text = full_text
+    for status in statuses:
+        if status in base_text:
+            base_text = base_text.split(status)[0].strip()
+            break
     
     if user_id in blocked_users:
         blocked_users.remove(user_id)
@@ -429,15 +439,7 @@ async def unblock_user(callback: CallbackQuery):
             ]
         ])
         
-        current_text = callback.message.text or callback.message.caption or ""
-        
-        statuses = ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]
-        for status in statuses:
-            if status in current_text:
-                current_text = current_text.split(status)[0].strip()
-                break
-        
-        new_text = f"{current_text}\n\n🔓 **Разблокирован** (модератор: {moderator_username})"
+        new_text = f"{base_text}\n\n🔓 **Разблокирован** (модератор: {moderator_username})"
         
         await callback.message.edit_text(
             new_text,

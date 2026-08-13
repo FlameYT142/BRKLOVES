@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 import json
+import re
 from typing import Dict, Set
 
 from aiogram import Bot, Dispatcher, F, types
@@ -183,8 +184,13 @@ async def publish_post(callback: CallbackQuery):
     data_part = callback.data.split("|")[1]
     user_id = int(data_part.split("|")[0])
     
+    # ----- ПОЛУЧАЕМ ДАННЫЕ МОДЕРАТОРА -----
+    moderator = callback.from_user
+    moderator_username = f"@{moderator.username}" if moderator.username else moderator.full_name or f"ID: {moderator.id}"
+    # ---------------------------------------
+    
     original_msg = callback.message
-    caption = original_msg.caption or original_msg.text
+    caption = original_msg.caption or original_msg.text or ""
     
     # Извлекаем ТОЛЬКО текст предложки
     suggestion_text = ""
@@ -214,7 +220,15 @@ async def publish_post(callback: CallbackQuery):
     if not suggestion_text:
         suggestion_text = caption
     
-    # Футер с новой ссылкой на чат
+    # Очистка текста
+    suggestion_text = suggestion_text.strip()
+    suggestion_text = re.sub(r'[\u200b\u200c\u200d\u2060\uFEFF]', '', suggestion_text)
+    suggestion_text = re.sub(r'\n\s*\n', '\n\n', suggestion_text)
+    
+    if not suggestion_text.strip():
+        suggestion_text = "📸 Медиафайл (без текста)"
+    
+    # Футер
     footer = (
         f"\n\n"
         f"💬 [Общение тут](https://t.me/chat_bratsklove)\n"
@@ -253,10 +267,24 @@ async def publish_post(callback: CallbackQuery):
             )
         
         await callback.answer("✅ Пост опубликован в канале!")
+        
+        # ----- РЕДАКТИРУЕМ СООБЩЕНИЕ В АДМИН-ЧАТЕ С УКАЗАНИЕМ МОДЕРАТОРА -----
+        current_text = callback.message.text or callback.message.caption or ""
+        
+        # Убираем старые статусы, если они есть
+        for status in ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]:
+            if status in current_text:
+                current_text = current_text.split(status)[0].strip()
+        
+        # Добавляем новый статус с модератором
+        new_text = f"{current_text}\n\n✅ **Опубликовано** (модератор: {moderator_username})"
+        
         await callback.message.edit_text(
-            f"{callback.message.text or callback.message.caption}\n\n✅ **Опубликовано**",
+            new_text,
             parse_mode="Markdown"
         )
+        # ------------------------------------------------
+    
     except Exception as e:
         logging.error(f"Ошибка публикации: {e}")
         await callback.answer("❌ Ошибка публикации", show_alert=True)
@@ -266,9 +294,24 @@ async def reject_post(callback: CallbackQuery):
     data_part = callback.data.split("|")[1]
     user_id = int(data_part.split("|")[0])
     
+    # ----- ПОЛУЧАЕМ ДАННЫЕ МОДЕРАТОРА -----
+    moderator = callback.from_user
+    moderator_username = f"@{moderator.username}" if moderator.username else moderator.full_name or f"ID: {moderator.id}"
+    # ---------------------------------------
+    
     await callback.answer("❌ Отказано")
+    
+    current_text = callback.message.text or callback.message.caption or ""
+    
+    # Убираем старые статусы
+    for status in ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]:
+        if status in current_text:
+            current_text = current_text.split(status)[0].strip()
+    
+    new_text = f"{current_text}\n\n❌ **Отклонено** (модератор: {moderator_username})"
+    
     await callback.message.edit_text(
-        f"{callback.message.text or callback.message.caption}\n\n❌ **Отклонено**",
+        new_text,
         parse_mode="Markdown"
     )
 
@@ -296,45 +339,10 @@ async def block_user(callback: CallbackQuery):
     data_part = callback.data.split("|")[1]
     user_id = int(data_part.split("|")[0])
     
-    if user_id in blocked_users:
-        blocked_users.remove(user_id)
-        save_blocked_users()
-        await callback.answer("🔓 Пользователь разблокирован")
-        
-        new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish|{data_part}"),
-                InlineKeyboardButton(text="❌ Отказать", callback_data=f"reject|{data_part}")
-            ],
-            [
-                InlineKeyboardButton(text="✏️ Ответить", callback_data=f"reply|{data_part}"),
-                InlineKeyboardButton(text="🚫 Заблокировать", callback_data=f"block|{data_part}")
-            ]
-        ])
-        
-        await callback.message.edit_reply_markup(reply_markup=new_keyboard)
-    else:
-        blocked_users.add(user_id)
-        save_blocked_users()
-        await callback.answer("🚫 Пользователь заблокирован")
-        
-        new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish|{data_part}"),
-                InlineKeyboardButton(text="❌ Отказать", callback_data=f"reject|{data_part}")
-            ],
-            [
-                InlineKeyboardButton(text="✏️ Ответить", callback_data=f"reply|{data_part}"),
-                InlineKeyboardButton(text="🔓 Разблокировать", callback_data=f"unblock|{data_part}")
-            ]
-        ])
-        
-        await callback.message.edit_reply_markup(reply_markup=new_keyboard)
-
-@dp.callback_query(F.data.startswith("unblock|"))
-async def unblock_user(callback: CallbackQuery):
-    data_part = callback.data.split("|")[1]
-    user_id = int(data_part.split("|")[0])
+    # ----- ПОЛУЧАЕМ ДАННЫЕ МОДЕРАТОРА -----
+    moderator = callback.from_user
+    moderator_username = f"@{moderator.username}" if moderator.username else moderator.full_name or f"ID: {moderator.id}"
+    # ---------------------------------------
     
     if user_id in blocked_users:
         blocked_users.remove(user_id)
@@ -352,7 +360,85 @@ async def unblock_user(callback: CallbackQuery):
             ]
         ])
         
-        await callback.message.edit_reply_markup(reply_markup=new_keyboard)
+        current_text = callback.message.text or callback.message.caption or ""
+        for status in ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]:
+            if status in current_text:
+                current_text = current_text.split(status)[0].strip()
+        
+        new_text = f"{current_text}\n\n🔓 **Разблокирован** (модератор: {moderator_username})"
+        
+        await callback.message.edit_text(
+            new_text,
+            reply_markup=new_keyboard,
+            parse_mode="Markdown"
+        )
+    else:
+        blocked_users.add(user_id)
+        save_blocked_users()
+        await callback.answer("🚫 Пользователь заблокирован")
+        
+        new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish|{data_part}"),
+                InlineKeyboardButton(text="❌ Отказать", callback_data=f"reject|{data_part}")
+            ],
+            [
+                InlineKeyboardButton(text="✏️ Ответить", callback_data=f"reply|{data_part}"),
+                InlineKeyboardButton(text="🔓 Разблокировать", callback_data=f"unblock|{data_part}")
+            ]
+        ])
+        
+        current_text = callback.message.text or callback.message.caption or ""
+        for status in ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]:
+            if status in current_text:
+                current_text = current_text.split(status)[0].strip()
+        
+        new_text = f"{current_text}\n\n🚫 **Заблокирован** (модератор: {moderator_username})"
+        
+        await callback.message.edit_text(
+            new_text,
+            reply_markup=new_keyboard,
+            parse_mode="Markdown"
+        )
+
+@dp.callback_query(F.data.startswith("unblock|"))
+async def unblock_user(callback: CallbackQuery):
+    data_part = callback.data.split("|")[1]
+    user_id = int(data_part.split("|")[0])
+    
+    # ----- ПОЛУЧАЕМ ДАННЫЕ МОДЕРАТОРА -----
+    moderator = callback.from_user
+    moderator_username = f"@{moderator.username}" if moderator.username else moderator.full_name or f"ID: {moderator.id}"
+    # ---------------------------------------
+    
+    if user_id in blocked_users:
+        blocked_users.remove(user_id)
+        save_blocked_users()
+        await callback.answer("🔓 Пользователь разблокирован")
+        
+        new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish|{data_part}"),
+                InlineKeyboardButton(text="❌ Отказать", callback_data=f"reject|{data_part}")
+            ],
+            [
+                InlineKeyboardButton(text="✏️ Ответить", callback_data=f"reply|{data_part}"),
+                InlineKeyboardButton(text="🚫 Заблокировать", callback_data=f"block|{data_part}")
+            ]
+        ])
+        
+        current_text = callback.message.text or callback.message.caption or ""
+        for status in ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]:
+            if status in current_text:
+                current_text = current_text.split(status)[0].strip()
+        
+        new_text = f"{current_text}\n\n🔓 **Разблокирован** (модератор: {moderator_username})"
+        
+        await callback.message.edit_text(
+            new_text,
+            reply_markup=new_keyboard,
+            parse_mode="Markdown"
+        )
     else:
         await callback.answer("⚠️ Пользователь уже разблокирован")
 

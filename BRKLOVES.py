@@ -3,23 +3,29 @@ import asyncio
 import logging
 import json
 import re
-from typing import Dict, Set
+from typing import Dict, Set, List
 
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 # ------------------ КОНФИГУРАЦИЯ ------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", -1004386994995))
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@BRKLOVES")
 
-# Файл для хранения блокировок
-BLOCKED_FILE = "blocked_users.json"
+# ID админа для рассылки (ваш Telegram ID)
+ADMIN_ID = 1302410770  # <--- ВСТАВЬТЕ СВОЙ ID
 
+# Файлы для хранения
+BLOCKED_FILE = "blocked_users.json"
+USERS_FILE = "users.json"
+
+# ------------------ РАБОТА С ФАЙЛАМИ ------------------
 def load_blocked_users():
-    """Загружает список заблокированных пользователей из файла"""
     if os.path.exists(BLOCKED_FILE):
         try:
             with open(BLOCKED_FILE, "r", encoding="utf-8") as f:
@@ -29,19 +35,40 @@ def load_blocked_users():
     return set()
 
 def save_blocked_users():
-    """Сохраняет список заблокированных пользователей в файл"""
     with open(BLOCKED_FILE, "w", encoding="utf-8") as f:
         json.dump(list(blocked_users), f, ensure_ascii=False, indent=2)
 
-# Загружаем блокировки из файла
+def load_users():
+    """Загружает список всех пользователей бота"""
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return set(data) if isinstance(data, list) else set()
+        except:
+            return set()
+    return set()
+
+def save_users():
+    """Сохраняет список всех пользователей бота"""
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(list(users), f, ensure_ascii=False, indent=2)
+
+# Загружаем данные
 blocked_users: Set[int] = load_blocked_users()
+users: Set[int] = load_users()
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# ------------------ КЛАВИАТУРЫ АДМИНА ------------------
+# ------------------ FSM ДЛЯ РАССЫЛКИ ------------------
+class BroadcastStates(StatesGroup):
+    waiting_for_text = State()
+    waiting_for_confirmation = State()
+
+# ------------------ КЛАВИАТУРЫ ------------------
 def get_admin_keyboard(user_id: int, username: str = None) -> InlineKeyboardMarkup:
     data = f"{user_id}"
     if username:
@@ -68,12 +95,156 @@ def get_admin_keyboard(user_id: int, username: str = None) -> InlineKeyboardMark
 async def start_cmd(message: Message):
     user_id = message.from_user.id
     
+    # Сохраняем пользователя
+    if user_id not in users:
+        users.add(user_id)
+        save_users()
+    
     welcome_text = (
         "👋 Привет!\n"
         "Это предложка Telegram каналу - **\"БРАТСКУ НРАВИТСЯ\"**\n\n"
         "Отправь свое сообщение, и мы опубликуем его в канал"
     )
     await message.answer(welcome_text, parse_mode="Markdown")
+
+# ------------------ КОМАНДА ДЛЯ РАССЫЛКИ (ТОЛЬКО АДМИН) ------------------
+@dp.message(Command("send_all"))
+async def send_all_command(message: Message, state: FSMContext):
+    """Админ-команда для начала рассылки"""
+    user_id = message.from_user.id
+    
+    if user_id != ADMIN_ID:
+        await message.answer("⛔ У вас нет прав для этой команды.")
+        return
+    
+    total_users = len(users)
+    blocked_count = len(blocked_users)
+    active_users = total_users - blocked_count
+    
+    await message.answer(
+        f"📊 **Статистика пользователей:**\n"
+        f"• Всего: {total_users}\n"
+        f"• Заблокировано: {blocked_count}\n"
+        f"• Активных: {active_users}\n\n"
+        f"✏️ Напишите текст для рассылки.\n"
+        f"Отправьте `cancel` чтобы отменить.",
+        parse_mode="Markdown"
+    )
+    await state.set_state(BroadcastStates.waiting_for_text)
+
+@dp.message(BroadcastStates.waiting_for_text)
+async def broadcast_get_text(message: Message, state: FSMContext):
+    """Получает текст для рассылки"""
+    if message.text and message.text.lower() == "cancel":
+        await state.clear()
+        await message.answer("❌ Рассылка отменена.")
+        return
+    
+    # Сохраняем текст
+    text = message.text or message.caption or ""
+    if not text:
+        await message.answer("⚠️ Отправьте текст или отмените (`cancel`)")
+        return
+    
+    await state.update_data(text=text)
+    
+    # Подтверждение
+    total_users = len(users)
+    blocked_count = len(blocked_users)
+    active_users = total_users - blocked_count
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Отправить всем", callback_data="broadcast_confirm"),
+            InlineKeyboardButton(text="❌ Только активным", callback_data="broadcast_active")
+        ],
+        [
+            InlineKeyboardButton(text="❌ Отменить", callback_data="broadcast_cancel")
+        ]
+    ])
+    
+    await message.answer(
+        f"📨 **Текст для рассылки:**\n\n{text}\n\n"
+        f"👥 Получат: {active_users} активных (из {total_users} всего)\n\n"
+        f"Выберите действие:",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+    await state.set_state(BroadcastStates.waiting_for_confirmation)
+
+# ------------------ ОБРАБОТКА КНОПОК РАССЫЛКИ ------------------
+@dp.callback_query(lambda c: c.data.startswith("broadcast_"))
+async def broadcast_callback(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    
+    if user_id != ADMIN_ID:
+        await callback.answer("⛔ У вас нет прав.")
+        return
+    
+    data = await state.get_data()
+    text = data.get("text", "")
+    
+    if not text:
+        await callback.answer("⚠️ Текст не найден. Начните заново с /send_all")
+        await state.clear()
+        return
+    
+    action = callback.data.replace("broadcast_", "")
+    
+    if action == "cancel":
+        await state.clear()
+        await callback.message.edit_text("❌ Рассылка отменена.")
+        await callback.answer()
+        return
+    
+    # Определяем, кому отправлять
+    if action == "confirm":
+        # Всем
+        target_users = list(users)
+        await callback.message.edit_text("⏳ Начинаю рассылку всем пользователям...")
+    elif action == "active":
+        # Только активным (не заблокированным)
+        target_users = [uid for uid in users if uid not in blocked_users]
+        await callback.message.edit_text("⏳ Начинаю рассылку активным пользователям...")
+    else:
+        await callback.answer("Неизвестное действие")
+        return
+    
+    await callback.answer()
+    
+    # ----- САМА РАССЫЛКА -----
+    sent = 0
+    failed = 0
+    skipped = 0
+    
+    for i, uid in enumerate(target_users):
+        try:
+            await bot.send_message(uid, text, parse_mode="Markdown")
+            sent += 1
+        except Exception as e:
+            if "bot was blocked by the user" in str(e):
+                skipped += 1
+            else:
+                failed += 1
+        
+        # Задержка, чтобы не поймать flood
+        if (i + 1) % 30 == 0:
+            await asyncio.sleep(1)
+        else:
+            await asyncio.sleep(0.05)  # 50 мс между сообщениями
+    
+    # Итог
+    total = len(target_users)
+    await state.clear()
+    
+    await callback.message.edit_text(
+        f"✅ **Рассылка завершена!**\n\n"
+        f"📤 Отправлено: {sent}\n"
+        f"❌ Ошибок: {failed}\n"
+        f"🚫 Заблокировали бота: {skipped}\n"
+        f"📊 Всего в списке: {total}",
+        parse_mode="Markdown"
+    )
 
 # ------------------ ПРЕДЛОЖКИ (ТОЛЬКО В ЛИЧКУ БОТА) ------------------
 @dp.message(F.chat.id != ADMIN_CHAT_ID)
@@ -266,25 +437,27 @@ async def publish_post(callback: CallbackQuery):
         
         await callback.answer("✅ Пост опубликован в канале!")
         
-        # ----- УДАЛЯЕМ СТАРЫЙ СТАТУС И ДОБАВЛЯЕМ НОВЫЙ -----
         current_text = callback.message.text or callback.message.caption or ""
         
-        # Убираем все статусы
-        statuses = ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]
-        base_text = current_text
-        for status in statuses:
-            if status in base_text:
-                base_text = base_text.split(status)[0].strip()
-                break
-        
-        # Добавляем новый статус
-        new_text = f"{base_text}\n\n✅ **Опубликовано** (модератор: {moderator_username})"
-        
-        await callback.message.edit_text(
-            new_text,
-            parse_mode="Markdown"
-        )
-        # ------------------------------------------------
+        if current_text:
+            statuses = ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]
+            base_text = current_text
+            for status in statuses:
+                if status in base_text:
+                    base_text = base_text.split(status)[0].strip()
+                    break
+            
+            new_text = f"{base_text}\n\n✅ **Опубликовано** (модератор: {moderator_username})"
+            
+            await callback.message.edit_text(
+                new_text,
+                parse_mode="Markdown"
+            )
+        else:
+            await callback.message.answer(
+                f"✅ **Опубликовано** (модератор: {moderator_username})",
+                parse_mode="Markdown"
+            )
     
     except Exception as e:
         logging.error(f"Ошибка публикации: {e}")
@@ -302,20 +475,25 @@ async def reject_post(callback: CallbackQuery):
     
     current_text = callback.message.text or callback.message.caption or ""
     
-    # Убираем все статусы
-    statuses = ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]
-    base_text = current_text
-    for status in statuses:
-        if status in base_text:
-            base_text = base_text.split(status)[0].strip()
-            break
-    
-    new_text = f"{base_text}\n\n❌ **Отклонено** (модератор: {moderator_username})"
-    
-    await callback.message.edit_text(
-        new_text,
-        parse_mode="Markdown"
-    )
+    if current_text:
+        statuses = ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]
+        base_text = current_text
+        for status in statuses:
+            if status in base_text:
+                base_text = base_text.split(status)[0].strip()
+                break
+        
+        new_text = f"{base_text}\n\n❌ **Отклонено** (модератор: {moderator_username})"
+        
+        await callback.message.edit_text(
+            new_text,
+            parse_mode="Markdown"
+        )
+    else:
+        await callback.message.answer(
+            f"❌ **Отклонено** (модератор: {moderator_username})",
+            parse_mode="Markdown"
+        )
 
 @dp.callback_query(F.data.startswith("reply|"))
 async def reply_to_user(callback: CallbackQuery):
@@ -344,10 +522,8 @@ async def block_user(callback: CallbackQuery):
     moderator = callback.from_user
     moderator_username = f"@{moderator.username}" if moderator.username else moderator.full_name or f"ID: {moderator.id}"
     
-    # Определяем базовый текст (без статусов)
     full_text = callback.message.text or callback.message.caption or ""
     
-    # Убираем ВСЕ статусы
     statuses = ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]
     base_text = full_text
     for status in statuses:
@@ -356,7 +532,6 @@ async def block_user(callback: CallbackQuery):
             break
     
     if user_id in blocked_users:
-        # Разблокируем
         blocked_users.remove(user_id)
         save_blocked_users()
         await callback.answer("🔓 Пользователь разблокирован")
@@ -380,7 +555,6 @@ async def block_user(callback: CallbackQuery):
             parse_mode="Markdown"
         )
     else:
-        # Блокируем
         blocked_users.add(user_id)
         save_blocked_users()
         await callback.answer("🚫 Пользователь заблокирован")
@@ -412,10 +586,8 @@ async def unblock_user(callback: CallbackQuery):
     moderator = callback.from_user
     moderator_username = f"@{moderator.username}" if moderator.username else moderator.full_name or f"ID: {moderator.id}"
     
-    # Определяем базовый текст (без статусов)
     full_text = callback.message.text or callback.message.caption or ""
     
-    # Убираем ВСЕ статусы
     statuses = ["✅ **Опубликовано**", "❌ **Отклонено**", "🔓 **Разблокирован**", "🚫 **Заблокирован**"]
     base_text = full_text
     for status in statuses:
@@ -454,6 +626,7 @@ async def main():
     print("✅ Бот запущен и готов к работе!")
     print(f"📢 Канал: {CHANNEL_ID}")
     print(f"👥 Админ-чат: {ADMIN_CHAT_ID}")
+    print(f"👤 Всего пользователей: {len(users)}")
     print(f"🔒 Загружено блокировок: {len(blocked_users)}")
     await dp.start_polling(bot)
 
